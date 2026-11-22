@@ -9,20 +9,56 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/">GRATTEN</a>
-    <div id="nav-user"></div>
+    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">G</span>GRATTEN</a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/">Home</a>
+      <a href="#features">Features</a>
+    </nav>
+    <div id="nav-user">
+      <button type="button" class="nav-login" onclick="document.querySelector('#start-login').click()">Log in</button>
+    </div>
   </header>
   <main id="app" class="container">
     <section class="hero">
-      <p class="eyebrow">Our Lady of Perpetual Succor College</p>
-      <h1>Student Grades &amp; Attendance System</h1>
-      <p>Track academic progress and attendance in one centralized platform.</p>
-      <button id="start-login" class="primary">Access GRATTEN</button>
+      <div class="hero-inner">
+        <p class="eyebrow">Our Lady of Perpetual Succor College</p>
+        <h1>Student Grades &amp; Attendance System</h1>
+        <p class="lead">Track academic progress and attendance in one centralized platform, built for OLOPSC students and instructors.</p>
+        <div class="hero-actions">
+          <button id="start-login" class="primary">Access GRATTEN</button>
+          <a class="ghost" href="#features">See how it works</a>
+        </div>
+      </div>
+
+      <ul class="features" id="features">
+        <li class="feature">
+          <span class="feature-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M4 19V5m0 14h16M8 16v-5m4 5V8m4 8v-3"/></svg>
+          </span>
+          <h3>Weighted grades</h3>
+          <p>Output 25%, Quizzes 20%, Recitation 15% and Exam 40%, computed automatically.</p>
+        </li>
+        <li class="feature">
+          <span class="feature-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4m8-4v4M4 10h16m-11 5 2 2 4-4"/></svg>
+          </span>
+          <h3>Attendance tracking</h3>
+          <p>Every 3 lates count as 1 absence. More than 8 total absences means FA.</p>
+        </li>
+        <li class="feature">
+          <span class="feature-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M12 3 3 8l9 5 9-5-9-5Zm-6 8v5c0 1.5 2.7 3 6 3s6-1.5 6-3v-5"/></svg>
+          </span>
+          <h3>Clear results</h3>
+          <p>See every subject, your general average and your standing in one view.</p>
+        </li>
+      </ul>
     </section>
     <section id="workspace" hidden></section>
   </main>
   <footer>© 2026 GRATTEN · OLOPSC College Department</footer>
   <div id="toast" role="status" aria-live="polite"></div>
   <script src="/static/app.js" defer></script>
+  <script src="/static/profile.js" defer></script>
 </body>
 </html>

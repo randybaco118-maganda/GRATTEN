@@ -1,18 +1,25 @@
 const app = document.querySelector("#app");
 const workspace = document.querySelector("#workspace");
 const navUser = document.querySelector("#nav-user");
-let user = null, selectedSubject = "DB101", students = [];
+let user = null, selectedSubject = "DB101", students = [], csrfToken = "";
 
 async function api(path, options={}) {
+  const method = (options.method || "GET").toUpperCase();
   const response = await fetch(path, {
     credentials:"same-origin",
-    headers:{"Content-Type":"application/json", ...(options.headers||{})},
-    ...options
+    ...options,
+    headers:{
+      "Content-Type":"application/json",
+      ...(method !== "GET" ? {"X-CSRF-Token": csrfToken} : {}),
+      ...(options.headers||{})
+    }
   });
   const data = await response.json().catch(()=>({}));
+  if (data.csrf_token) csrfToken = data.csrf_token;
   if (!response.ok) throw new Error(data.error || "Request failed.");
   return data;
 }
+
 function toast(message){const el=document.querySelector("#toast");el.textContent=message;el.style.display="block";setTimeout(()=>el.style.display="none",2600)}
 function escapeHtml(value){return String(value??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 function showLogin(){
@@ -82,4 +89,7 @@ async function renderResults(){
   catch(e){host.textContent=e.message}
 }
 document.querySelector("#start-login").onclick=showLogin;
-(async()=>{try{const d=await api("/api/auth/me");user=d.user;await renderDashboard()}catch(_){}})();
+(async()=>{
+  try{ await api("/api/csrf") }catch(_){}
+  try{const d=await api("/api/auth/me");user=d.user;await renderDashboard()}catch(_){}
+})();

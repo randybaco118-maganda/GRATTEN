@@ -1,15 +1,23 @@
+import os
 from pathlib import Path
 import sqlite3
 
 ROOT = Path(__file__).resolve().parent.parent
-DB_PATH = ROOT / "instance" / "gratten.db"
+
+
+def db_path():
+    # GRATTEN_DB lets tests (or deployments) point at a different file.
+    return Path(os.environ.get("GRATTEN_DB") or ROOT / "instance" / "gratten.db")
+
 
 def get_db():
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    path = db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
 
 def init_db():
     with get_db() as db:
@@ -44,6 +52,15 @@ def init_db():
             name TEXT NOT NULL,
             units INTEGER NOT NULL DEFAULT 3,
             instructor TEXT NOT NULL
+        );
+
+        -- Which teacher may view and edit which subject.
+        CREATE TABLE IF NOT EXISTS teacher_subjects (
+            teacher_id INTEGER NOT NULL,
+            subject_id TEXT NOT NULL,
+            PRIMARY KEY(teacher_id, subject_id),
+            FOREIGN KEY(teacher_id) REFERENCES teachers(teacher_id) ON DELETE CASCADE,
+            FOREIGN KEY(subject_id) REFERENCES subjects(subject_id) ON DELETE CASCADE
         );
 
         CREATE TABLE IF NOT EXISTS enrollments (

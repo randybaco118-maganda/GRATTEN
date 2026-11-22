@@ -32,49 +32,74 @@ BASE = {
  "2026-8822":(72,68,74,70,16,1,6),
 }
 
+
+def assign_default_teacher_subjects(db):
+    """Give each teacher the subjects whose `instructor` matches their name.
+
+    Only runs while teacher_subjects is empty, so it never undoes assignments
+    that were changed later. This also backfills databases created before
+    the teacher_subjects table existed.
+    """
+    if db.execute("SELECT COUNT(*) FROM teacher_subjects").fetchone()[0]:
+        return
+    db.execute(
+        "INSERT OR IGNORE INTO teacher_subjects(teacher_id, subject_id) "
+        "SELECT t.teacher_id, s.subject_id FROM teachers t "
+        "JOIN subjects s ON s.instructor = t.name"
+    )
+
+
+def _seed_fresh_database(db):
+    # Demo-only credentials. Replace these accounts/passwords before real deployment.
+    for sid, name, course, email in STUDENTS:
+        cur = db.execute(
+            "INSERT INTO users(login_id,email,password_hash,role) VALUES(?,?,?,?)",
+            (sid, email, generate_password_hash("Student123!"), "Student")
+        )
+        db.execute("INSERT INTO students(student_id,user_id,name,course) VALUES(?,?,?,?)",
+                   (sid, cur.lastrowid, name, course))
+    teacher = db.execute(
+        "INSERT INTO users(login_id,email,password_hash,role) VALUES(?,?,?,?)",
+        ("teacher@olopsc.edu.ph","teacher@olopsc.edu.ph",
+         generate_password_hash("Teacher123!"),"Teacher")
+    )
+    db.execute("INSERT INTO teachers(user_id,name) VALUES(?,?)",
+               (teacher.lastrowid,"Mrs. Ruby Cruz"))
+    db.executemany("INSERT INTO subjects VALUES(?,?,?,?,?)", SUBJECTS)
+    for sidx, subject in enumerate(SUBJECTS):
+        subject_id = subject[0]
+        for stidx, (sid, _name, _course, _email) in enumerate(STUDENTS):
+            b = BASE[sid]
+            if sidx == 0:
+                quiz, rec, output, exam, present, late, absent = b
+            else:
+                offset = ((sidx * 3 + stidx * 2) % 9) - 4
+                clamp = lambda v: max(60, min(99, v))
+                quiz = clamp(b[0] + offset)
+                rec = clamp(b[1] - offset)
+                output = clamp(b[2] + (offset % 3))
+                exam = clamp(b[3] + offset)
+                present = max(12, min(23, b[4] - (sidx % 3)))
+                late = (b[5] + sidx) % 4
+                absent = max(0, b[6] - (1 if stidx % 2 == 0 else 0))
+            cur = db.execute(
+                "INSERT INTO enrollments(student_id,subject_id) VALUES(?,?)",
+                (sid, subject_id)
+            )
+            eid = cur.lastrowid
+            db.execute("INSERT INTO grades(enrollment_id,quiz,recitation,output,exam) VALUES(?,?,?,?,?)",
+                       (eid, quiz, rec, output, exam))
+            db.execute("INSERT INTO attendance(enrollment_id,present,late,absent) VALUES(?,?,?,?)",
+                       (eid, present, late, absent))
+
+
 def seed_demo_data():
     init_db()
     with get_db() as db:
-        if db.execute("SELECT COUNT(*) FROM users").fetchone()[0]:
-            return
-        # Demo-only credentials. Replace these accounts/passwords before real deployment.
-        for sid, name, course, email in STUDENTS:
-            cur = db.execute(
-                "INSERT INTO users(login_id,email,password_hash,role) VALUES(?,?,?,?)",
-                (sid, email, generate_password_hash("Student123!"), "Student")
-            )
-            db.execute("INSERT INTO students(student_id,user_id,name,course) VALUES(?,?,?,?)",
-                       (sid, cur.lastrowid, name, course))
-        teacher = db.execute(
-            "INSERT INTO users(login_id,email,password_hash,role) VALUES(?,?,?,?)",
-            ("teacher@olopsc.edu.ph","teacher@olopsc.edu.ph",
-             generate_password_hash("Teacher123!"),"Teacher")
-        )
-        db.execute("INSERT INTO teachers(user_id,name) VALUES(?,?)",
-                   (teacher.lastrowid,"Mrs. Ruby Cruz"))
-        db.executemany("INSERT INTO subjects VALUES(?,?,?,?,?)", SUBJECTS)
-        for sidx, subject in enumerate(SUBJECTS):
-            subject_id = subject[0]
-            for stidx, (sid, _name, _course, _email) in enumerate(STUDENTS):
-                b = BASE[sid]
-                if sidx == 0:
-                    quiz, rec, output, exam, present, late, absent = b
-                else:
-                    offset = ((sidx * 3 + stidx * 2) % 9) - 4
-                    clamp = lambda v: max(60, min(99, v))
-                    quiz = clamp(b[0] + offset)
-                    rec = clamp(b[1] - offset)
-                    output = clamp(b[2] + (offset % 3))
-                    exam = clamp(b[3] + offset)
-                    present = max(12, min(23, b[4] - (sidx % 3)))
-                    late = (b[5] + sidx) % 4
-                    absent = max(0, b[6] - (1 if stidx % 2 == 0 else 0))
-                cur = db.execute(
-                    "INSERT INTO enrollments(student_id,subject_id) VALUES(?,?)",
-                    (sid, subject_id)
-                )
-                eid = cur.lastrowid
-                db.execute("INSERT INTO grades(enrollment_id,quiz,recitation,output,exam) VALUES(?,?,?,?,?)",
-                           (eid, quiz, rec, output, exam))
-                db.execute("INSERT INTO attendance(enrollment_id,present,late,absent) VALUES(?,?,?,?)",
-                           (eid, present, late, absent))
+        # BEGIN IMMEDIATE takes the write lock *before* the "is it empty?" check,
+        # so two workers starting at once cannot both seed (the second waits,
+        # then sees the data and skips).
+        db.execute("BEGIN IMMEDIATE")
+        if not db.execute("SELECT COUNT(*) FROM users").fetchone()[0]:
+            _seed_fresh_database(db)
+        assign_default_teacher_subjects(db)

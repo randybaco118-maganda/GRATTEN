@@ -190,3 +190,39 @@ def test_attendance_increment_and_decrement(client):
         headers=headers,
     ).get_json()["record"]["late"]
     assert after == before - 1
+
+# ---- rbaco account, sections, profile -------------------------------------
+def test_rbaco_is_a_separate_student(client):
+    login(client, "rbaco25a-0030@olopsc.edu.ph", "Student123!")
+    me = client.get("/api/auth/me").get_json()["user"]
+    assert me["student_id"] == "2026-0030"
+    assert me["name"] != "Alex Rivera"
+
+
+def test_teacher_creates_section_assigns_students_and_enrolls(client):
+    token = teacher(client)
+    h = {"X-CSRF-Token": token}
+    resp = client.post("/api/sections", json={"code": "bsit 1-a", "program": "bsit", "year_level": 1}, headers=h)
+    assert resp.status_code == 201
+    sid = resp.get_json()["section"]["section_id"]
+    assert client.post("/api/sections", json={"code": "BSIT 1-A", "program": "BSIT"}, headers=h).status_code == 409
+    resp = client.put(f"/api/sections/{sid}/students", json={"student_ids": ["2026-8812", "2026-0030"]}, headers=h)
+    assert resp.status_code == 200 and resp.get_json()["student_count"] == 2
+    assert client.post(f"/api/sections/{sid}/enroll", json={"subject_id": "WD102"}, headers=h).status_code == 403
+    resp = client.post(f"/api/sections/{sid}/enroll", json={"subject_id": "DB101"}, headers=h)
+    assert resp.status_code == 200 and resp.get_json()["enrolled"] == 0  # already enrolled
+
+
+def test_student_cannot_manage_sections(client):
+    token = student(client)
+    resp = client.post("/api/sections", json={"code": "HACK", "program": "X1"}, headers={"X-CSRF-Token": token})
+    assert resp.status_code == 403
+
+
+def test_profile_and_password_change(client):
+    token = student(client)
+    h = {"X-CSRF-Token": token}
+    prof = client.get("/api/profile").get_json()["profile"]
+    assert prof["student_id"] == "2026-8812"
+    bad = client.post("/api/account/password", json={"current_password": "wrong", "new_password": "Another123!"}, headers=h)
+    assert bad.status_code == 400

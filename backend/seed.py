@@ -2,6 +2,7 @@ import os
 
 from werkzeug.security import generate_password_hash
 from .database import get_db, init_db, link_legacy_records
+from .enrollment import enroll_student
 
 SUBJECTS = [
     ("DB101", "FDMS", "FUNDAMENTAL OF DATABASE", 3, "Mrs. Ruby Cruz"),
@@ -13,8 +14,12 @@ SUBJECTS = [
     ("NC107", "NETCOM", "NETWORKING & COMMUNICATIONS", 3, "Prof. Elena Santos"),
 ]
 
+# The rbaco25a account is its own student. Change the name here if it is not "Rbaco".
+RBACO = ("2026-0030", "Rbaco", "BSIT", "rbaco25a-0030@olopsc.edu.ph")
+ALEX_EMAIL = "arivera26-8812@olopsc.edu.ph"
+
 STUDENTS = [
-    ("2026-8812", "Alex Rivera", "BSIT", "rbaco25a-0030@olopsc.edu.ph"),
+    ("2026-8812", "Alex Rivera", "BSIT", ALEX_EMAIL),
     ("2026-8813", "Bianca Santos", "BSCS", "bsantos26-8813@olopsc.edu.ph"),
     ("2026-8814", "Christian Cruz", "BSIT", "ccruz26-8814@olopsc.edu.ph"),
     ("2026-8815", "Diane Mendoza", "BSIS", "dmendoza26-8815@olopsc.edu.ph"),
@@ -25,6 +30,7 @@ STUDENTS = [
     ("2026-8820", "Ian Dela Cruz", "BSIT", "idelacruz26-8820@olopsc.edu.ph"),
     ("2026-8821", "Jasmine Valdez", "BSIS", "jvaldez26-8821@olopsc.edu.ph"),
     ("2026-8822", "Kevin Ramos", "BSCS", "kramos26-8822@olopsc.edu.ph"),
+    RBACO,
 ]
 
 BASE = {
@@ -39,6 +45,7 @@ BASE = {
     "2026-8820": (78, 75, 80, 76, 18, 2, 3),
     "2026-8821": (90, 89, 91, 92, 22, 1, 0),
     "2026-8822": (72, 68, 74, 70, 16, 1, 6),
+    "2026-0030": (88, 85, 90, 87, 21, 1, 1),
 }
 
 
@@ -53,12 +60,7 @@ def assign_default_teacher_subjects(db):
 
 
 def migrate_existing_grades_to_assessments(db):
-    """Convert legacy percentage columns into assessments, exactly once.
-
-    A flag in app_meta records that this ran, so assessments a teacher deletes
-    are never recreated on restart. Databases that already have assessments are
-    just marked as done. Nothing is created when there are no legacy grades.
-    """
+    """Convert legacy percentage columns into assessments, exactly once."""
     if db.execute("SELECT 1 FROM app_meta WHERE key='legacy_grades_migrated'").fetchone():
         return
     db.execute("INSERT INTO app_meta(key,value) VALUES('legacy_grades_migrated','1')")
@@ -100,6 +102,95 @@ def migrate_existing_grades_to_assessments(db):
                         "INSERT OR IGNORE INTO assessment_scores (assessment_id, enrollment_id, earned_points) VALUES (?,?,?)",
                         (cur.lastrowid, enr["enrollment_id"], float(enr[col_name])),
                     )
+
+
+def ensure_rbaco_account(db):
+    """Idempotent. Makes rbaco25a its own student instead of an alias for Alex Rivera.
+
+    Works on existing databases: if Alex still owns the rbaco email, Alex gets a
+    different email, then the rbaco student is created and enrolled in every subject.
+    Only runs when the demo students exist.
+    """
+    sid, name, course, email = RBACO
+    if not db.execute("SELECT 1 FROM students WHERE student_id='2026-8812'").fetchone():
+        return
+    owner = db.execute(
+        "SELECT u.id, s.student_id FROM users u LEFT JOIN students s ON s.user_id=u.id WHERE u.email=?",
+        (email,),
+    ).fetchone()
+    if owner and owner["student_id"] == "2026-8812":
+        db.execute("UPDATE users SET email=? WHERE id=?", (ALEX_EMAIL, owner["id"]))
+        owner = None
+    if db.execute("SELECT 1 FROM students WHERE student_id=?", (sid,)).fetchone():
+        return
+    if owner:  # the email belongs to somebody else; do not touch it
+        return
+    cur = db.execute(
+        "INSERT INTO users (login_id,email,password_hash,role) VALUES(?,?,?,'Student')",
+        (sid, email, generate_password_hash("Student123!")),
+    )
+    db.execute(
+        "INSERT INTO students (student_id,user_id,name,course) VALUES(?,?,?,?)",
+        (sid, cur.lastrowid, name, course),
+    )
+    for row in db.execute("SELECT subject_id FROM subjects").fetchall():
+        enroll_student(db, sid, row["subject_id"])
+
+
+# Dummy accounts for realistic testing. Password for all students: Student123!
+# (student_id, name, course, email, score %, recitation, present, late, absent)
+TEST_STUDENTS = [
+    ("2026-1001", "Maria Clara Dizon", "BSIT", "mdizon26-1001@olopsc.edu.ph", 92, 95, 22, 0, 0),
+    ("2026-1002", "Juan Miguel Pascual", "BSCS", "jpascual26-1002@olopsc.edu.ph", 81, 85, 19, 2, 2),
+    ("2026-1003", "Angelica Navarro", "BSIS", "anavarro26-1003@olopsc.edu.ph", 68, 70, 12, 3, 9),  # fails attendance + grade
+    ("2026-1004", "Paolo Bautista", "BSIT", "pbautista26-1004@olopsc.edu.ph", 76, 80, 17, 1, 5),
+]
+TEST_TEACHER = ("marco.reyes@olopsc.edu.ph", "Mr. Marco Reyes")  # password Teacher123!
+
+
+def ensure_test_accounts(db):
+    """Idempotent. Adds a second teacher and four realistic students, enrolled in every
+    subject with complete grades and attendance. Development/testing only."""
+    if not db.execute("SELECT 1 FROM subjects").fetchone():
+        return
+    email, tname = TEST_TEACHER
+    if not db.execute("SELECT 1 FROM users WHERE email=?", (email,)).fetchone():
+        u = db.execute(
+            "INSERT INTO users (login_id,email,password_hash,role) VALUES(?,?,?,'Teacher')",
+            (email, email, generate_password_hash("Teacher123!")),
+        )
+        t = db.execute("INSERT INTO teachers (user_id,name) VALUES(?,?)", (u.lastrowid, tname))
+        db.execute(
+            "INSERT OR IGNORE INTO teacher_subjects (teacher_id, subject_id) "
+            "SELECT ?, subject_id FROM subjects WHERE instructor=?",
+            (t.lastrowid, tname),
+        )
+
+    subjects = [r["subject_id"] for r in db.execute("SELECT subject_id FROM subjects")]
+    for sid, name, course, mail, pct, rec, present, late, absent in TEST_STUDENTS:
+        if db.execute("SELECT 1 FROM students WHERE student_id=?", (sid,)).fetchone():
+            continue
+        if db.execute("SELECT 1 FROM users WHERE login_id=? OR email=?", (sid, mail)).fetchone():
+            continue
+        u = db.execute(
+            "INSERT INTO users (login_id,email,password_hash,role) VALUES(?,?,?,'Student')",
+            (sid, mail, generate_password_hash("Student123!")),
+        )
+        db.execute("INSERT INTO students (student_id,user_id,name,course) VALUES(?,?,?,?)",
+                   (sid, u.lastrowid, name, course))
+        for subject_id in subjects:
+            enroll_student(db, sid, subject_id)
+            eid = db.execute("SELECT enrollment_id FROM enrollments WHERE student_id=? AND subject_id=?",
+                             (sid, subject_id)).fetchone()["enrollment_id"]
+            db.execute("UPDATE grades SET recitation=? WHERE enrollment_id=?", (rec, eid))
+            db.execute("UPDATE attendance SET present=?, late=?, absent=? WHERE enrollment_id=?",
+                       (present, late, absent, eid))
+            for a in db.execute("SELECT id, max_points FROM assessments WHERE subject_id=?", (subject_id,)):
+                db.execute(
+                    "INSERT OR IGNORE INTO assessment_scores (assessment_id, enrollment_id, earned_points) "
+                    "VALUES (?,?,?)",
+                    (a["id"], eid, round(a["max_points"] * pct / 100, 2)),
+                )
 
 
 def _bootstrap_admin(db):
@@ -180,6 +271,8 @@ def seed_demo_data():
             if os.environ.get("GRATTEN_SEED_DEMO", "1") == "1":
                 _seed_fresh_database(db)
         _bootstrap_admin(db)
+        ensure_rbaco_account(db)
         link_legacy_records(db)
         assign_default_teacher_subjects(db)
         migrate_existing_grades_to_assessments(db)
+        ensure_test_accounts(db)

@@ -49,6 +49,10 @@ function fmtFinalGrade(val) {
   return `<strong>${escapeHtml(val)}</strong>`;
 }
 
+function sectionOf(rec) {
+  return rec.section || "Unassigned";
+}
+
 function showLogin() {
   document.querySelector(".hero").hidden = true;
   workspace.hidden = false;
@@ -60,9 +64,14 @@ function showLogin() {
       <label class="field">Password<input name="password" type="password" required autocomplete="current-password"></label>
       <button class="primary" type="submit">Log in</button>
       <p class="muted">
-        Demo student: 2026-8812 / Student123!<br>
-        Demo student (RBACO): rbaco25a-0030@olopsc.edu.ph / Student123!<br>
-        Demo teacher: teacher@olopsc.edu.ph / Teacher123!
+        <strong>Demo accounts</strong><br>
+        Student: 2026-8812 / Student123!<br>
+        Student (RBACO): rbaco25a-0030@olopsc.edu.ph / Student123!<br>
+        Teacher: teacher@olopsc.edu.ph / Teacher123!<br><br>
+        <strong>Test accounts</strong><br>
+        Student: 2026-1001 / Student123!<br>
+        Student (failing attendance): 2026-1003 / Student123!<br>
+        Teacher (WD102, OS106): marco.reyes@olopsc.edu.ph / Teacher123!
       </p>
     </form>`;
   document.querySelector("#login-form").addEventListener("submit", async (e) => {
@@ -98,6 +107,7 @@ async function renderDashboard() {
   if (!s.subjects.some((x) => x.subject_id === selectedSubject)) {
     selectedSubject = s.subjects[0]?.subject_id;
   }
+  const isTeacher = user.role === "Teacher";
 
   workspace.innerHTML = `
     <section class="panel">
@@ -110,7 +120,8 @@ async function renderDashboard() {
           <button class="secondary" id="grades-tab">Grades</button>
           <button class="secondary" id="attendance-tab">Attendance</button>
           <button class="secondary" id="results-tab">Results</button>
-          ${user.role === "Teacher" ? '<button class="secondary" id="add-subject-tab">+ Add subject</button>' : ""}
+          ${isTeacher ? '<button class="secondary" id="sections-tab">Sections</button>' : ""}
+          ${isTeacher ? '<button class="secondary" id="add-subject-tab">+ Add subject</button>' : ""}
         </div>
       </div>
       <div class="field">
@@ -123,7 +134,7 @@ async function renderDashboard() {
     </section>`;
 
   const select = document.querySelector("#subject");
-  select.value = selectedSubject;
+  if (selectedSubject) select.value = selectedSubject;
   select.onchange = () => {
     selectedSubject = select.value;
     selectedSection = "ALL";
@@ -132,6 +143,8 @@ async function renderDashboard() {
   document.querySelector("#grades-tab").onclick = () => renderModule("grades");
   document.querySelector("#attendance-tab").onclick = () => renderModule("attendance");
   document.querySelector("#results-tab").onclick = () => renderResults();
+  const sectionsBtn = document.querySelector("#sections-tab");
+  if (sectionsBtn) sectionsBtn.onclick = showSections;
   const addBtn = document.querySelector("#add-subject-tab");
   if (addBtn) addBtn.onclick = showAddSubject;
   renderModule("grades");
@@ -185,6 +198,146 @@ function showAddSubject() {
   };
 }
 
+async function showSections() {
+  const host = document.querySelector("#module");
+  host.innerHTML = "<p>Loading sections...</p>";
+  try {
+    const d = await api("/api/sections");
+    const sections = d.sections || [];
+    const cards = sections.length
+      ? sections.map((sec) => `
+        <div class="assessment-card">
+          <div class="assessment-card-head">
+            <strong>${escapeHtml(sec.code)}</strong>
+            <span class="badge-cat">${escapeHtml(sec.program)}${sec.year_level ? ` · Year ${sec.year_level}` : ""}</span>
+          </div>
+          <div class="muted">Students: <strong>${sec.student_count}</strong></div>
+          <div class="actions" style="margin-top:10px">
+            <button type="button" class="secondary" data-sec-manage="${sec.section_id}">Students</button>
+            <button type="button" class="primary" data-sec-enroll="${sec.section_id}">Enroll in subject</button>
+            <button type="button" class="danger" data-sec-del="${sec.section_id}">Delete</button>
+          </div>
+        </div>`).join("")
+      : '<p class="muted">No sections yet. Create one above.</p>';
+
+    host.innerHTML = `
+      <form id="section-form" class="panel" style="margin-bottom:16px">
+        <h3>Add a section</h3>
+        <label class="field">Section code
+          <input name="code" required maxlength="30" placeholder="e.g. BSIT 1-A">
+        </label>
+        <label class="field">Program
+          <input name="program" required maxlength="20" placeholder="e.g. BSIT">
+        </label>
+        <label class="field">Year level
+          <select name="year_level">
+            <option value="">Not set</option>
+            ${[1, 2, 3, 4, 5, 6].map((n) => `<option value="${n}">Year ${n}</option>`).join("")}
+          </select>
+        </label>
+        <button class="primary" type="submit">Create section</button>
+      </form>
+      <p class="muted">"Enroll in subject" enrolls every student of that section in the subject selected above${selectedSubject ? ` (${escapeHtml(selectedSubject)})` : ""}.</p>
+      <div class="assessment-list">${cards}</div>
+      <div id="section-editor"></div>`;
+
+    document.querySelector("#section-form").onsubmit = async (e) => {
+      e.preventDefault();
+      const f = new FormData(e.currentTarget);
+      const body = {
+        code: f.get("code"),
+        program: f.get("program"),
+        year_level: f.get("year_level") ? Number(f.get("year_level")) : null,
+      };
+      try {
+        await api("/api/sections", { method: "POST", body: JSON.stringify(body) });
+        toast("Section created.");
+        showSections();
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+
+    host.querySelectorAll("[data-sec-manage]").forEach((btn) => {
+      btn.onclick = () => manageSectionStudents(sections.find((x) => String(x.section_id) === btn.dataset.secManage));
+    });
+
+    host.querySelectorAll("[data-sec-enroll]").forEach((btn) => {
+      btn.onclick = async () => {
+        const sec = sections.find((x) => String(x.section_id) === btn.dataset.secEnroll);
+        if (!selectedSubject) return toast("Select or create a subject first.");
+        if (!confirm(`Enroll all ${sec.student_count} students of ${sec.code} in ${selectedSubject}?`)) return;
+        try {
+          const r = await api(`/api/sections/${sec.section_id}/enroll`, {
+            method: "POST",
+            body: JSON.stringify({ subject_id: selectedSubject }),
+          });
+          toast(`Enrolled ${r.enrolled} student(s). ${r.already_enrolled} already enrolled.`);
+        } catch (err) {
+          toast(err.message);
+        }
+      };
+    });
+
+    host.querySelectorAll("[data-sec-del]").forEach((btn) => {
+      btn.onclick = async () => {
+        const sec = sections.find((x) => String(x.section_id) === btn.dataset.secDel);
+        if (!confirm(`Delete section ${sec.code}?`)) return;
+        try {
+          await api(`/api/sections/${sec.section_id}`, { method: "DELETE" });
+          toast("Section deleted.");
+          showSections();
+        } catch (err) {
+          toast(err.message);
+        }
+      };
+    });
+  } catch (e) {
+    host.innerHTML = `<p class="fail">${escapeHtml(e.message)}</p>`;
+  }
+}
+
+async function manageSectionStudents(sec) {
+  const slot = document.querySelector("#section-editor");
+  slot.innerHTML = "<p>Loading students...</p>";
+  try {
+    const d = await api("/api/section-students");
+    const rows = d.students.map((s) => `
+      <label style="display:flex;gap:8px;align-items:center">
+        <input type="checkbox" name="student" value="${escapeHtml(s.student_id)}" ${s.section_id === sec.section_id ? "checked" : ""}>
+        <span>${escapeHtml(s.name)} (${escapeHtml(s.student_id)}) <span class="muted">· ${escapeHtml(s.section || "Unassigned")}</span></span>
+      </label>`).join("");
+    slot.innerHTML = `
+      <form id="section-students-form" class="panel" style="margin-top:16px">
+        <h3>Students in ${escapeHtml(sec.code)}</h3>
+        <p class="muted">Checked students belong to this section. Checking a student who is in another section moves them here.</p>
+        <div style="max-height:320px;overflow:auto;display:grid;gap:8px;margin:12px 0">${rows}</div>
+        <div class="actions">
+          <button class="primary" type="submit">Save students</button>
+          <button type="button" class="secondary" id="cancel-section-students">Cancel</button>
+        </div>
+      </form>`;
+    slot.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    document.querySelector("#cancel-section-students").onclick = () => { slot.innerHTML = ""; };
+    document.querySelector("#section-students-form").onsubmit = async (e) => {
+      e.preventDefault();
+      const ids = [...e.currentTarget.querySelectorAll('input[name="student"]:checked')].map((i) => i.value);
+      try {
+        await api(`/api/sections/${sec.section_id}/students`, {
+          method: "PUT",
+          body: JSON.stringify({ student_ids: ids }),
+        });
+        toast("Section students saved.");
+        showSections();
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+  } catch (err) {
+    slot.innerHTML = `<p class="fail">${escapeHtml(err.message)}</p>`;
+  }
+}
+
 function renderTeacherSectionsBar() {
   if (user.role !== "Teacher") return "";
   const sectionBadges = currentSections.length
@@ -208,7 +361,7 @@ function renderTeacherSectionsBar() {
 
 function getFilteredRecords() {
   if (user.role !== "Teacher" || selectedSection === "ALL") return currentRecords;
-  return currentRecords.filter((r) => r.course === selectedSection);
+  return currentRecords.filter((r) => sectionOf(r) === selectedSection);
 }
 
 function renderComponentSummaryTable(record) {
@@ -284,7 +437,7 @@ function openAssessmentModal(category, existing = null) {
     const val = found && found.earned_points !== null && found.earned_points !== undefined ? found.earned_points : "";
     return `
       <label class="field" style="margin:8px 0">
-        ${escapeHtml(rec.student_name)} (${escapeHtml(rec.student_id)}) — ${escapeHtml(rec.course || "")}
+        ${escapeHtml(rec.student_name)} (${escapeHtml(rec.student_id)}) — ${escapeHtml(sectionOf(rec))}
         <input type="number" step="0.01" min="0" name="score_${escapeHtml(rec.student_id)}" value="${escapeHtml(val)}" placeholder="Optional earned points">
       </label>`;
   }).join("");
@@ -393,12 +546,19 @@ function bindSectionButtons(kind) {
 
 async function renderModule(kind) {
   const host = document.querySelector("#module");
+  if (!selectedSubject) {
+    host.innerHTML = '<p class="muted">No subjects yet.</p>';
+    return;
+  }
   host.innerHTML = "<p>Loading records...</p>";
   try {
     const d = await api(`/api/records/${encodeURIComponent(selectedSubject)}`);
     currentRecords = d.records || [];
     currentAssessments = d.assessments || [];
     currentSections = d.sections || [];
+    if (selectedSection !== "ALL" && !currentSections.some((s) => s.section_name === selectedSection)) {
+      selectedSection = "ALL";
+    }
     const visibleRecords = getFilteredRecords();
 
     const notice = `<div class="notice">Grading: Output 25% · Quizzes 20% · Recitation 15% · Exam 40%. Attendance: every 3 lates = 1 absence; 8 or fewer total absences passes.</div>`;
@@ -423,7 +583,7 @@ async function renderModule(kind) {
                 <tr>
                   <td>${escapeHtml(r.student_name)}</td>
                   <td>${escapeHtml(r.student_id)}</td>
-                  ${user.role === "Teacher" ? `<td>${escapeHtml(r.course || "")}</td>` : ""}
+                  ${user.role === "Teacher" ? `<td>${escapeHtml(sectionOf(r))}</td>` : ""}
                   <td>${fmtPct(r.output)}</td>
                   <td>${fmtPct(r.quiz)}</td>
                   <td>${fmtPct(r.recitation)}</td>
@@ -502,7 +662,7 @@ async function renderModule(kind) {
                 <tr>
                   <td>${escapeHtml(r.student_name)}</td>
                   <td>${escapeHtml(r.student_id)}</td>
-                  ${user.role === "Teacher" ? `<td>${escapeHtml(r.course || "")}</td>` : ""}
+                  ${user.role === "Teacher" ? `<td>${escapeHtml(sectionOf(r))}</td>` : ""}
                   <td>${r.present}</td>
                   <td>${r.late}</td>
                   <td>${r.absent}</td>
@@ -669,6 +829,8 @@ document.querySelector("#start-login").onclick = showLogin;
   try {
     const d = await api("/api/auth/me");
     user = d.user;
-    await renderDashboard();
+    // profile.js listens for this, draws the nav (Dashboard / Profile / Logout)
+    // and shows the front page instead of jumping into the dashboard.
+    document.dispatchEvent(new CustomEvent("gratten:signed-in"));
   } catch (_) {}
 })();

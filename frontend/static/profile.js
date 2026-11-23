@@ -55,10 +55,7 @@
       </section>`;
 
     document.querySelector("#pf-back").onclick = () => renderDashboard();
-    document.querySelector("#pf-logout").onclick = async () => {
-      await api("/api/auth/logout", { method: "POST" });
-      user = null; navUser.innerHTML = ""; workspace.hidden = true; document.querySelector(".hero").hidden = false;
-    };
+    document.querySelector("#pf-logout").onclick = () => signOut();
     document.querySelector("#pf-info").onsubmit = async (e) => {
       e.preventDefault();
       const f = new FormData(e.currentTarget);
@@ -126,13 +123,50 @@
     };
   }
 
-  // Add a Profile button next to Logout whenever app.js draws the signed-in nav.
+  // ---- Front page (landing) behaviour -------------------------------------
+  function showLanding() {
+    document.querySelector(".hero").hidden = false;
+    workspace.hidden = true;
+    document.querySelector("#start-login").textContent = user ? "Go to dashboard" : "Access GRATTEN";
+    window.scrollTo({ top: 0 });
+  }
+
+  async function signOut() {
+    try { await api("/api/auth/logout", { method: "POST" }); } catch (_) {}
+    user = null;
+    navUser.innerHTML = '<button type="button" class="nav-login" id="nav-login">Log in</button>';
+    document.querySelector("#nav-login").onclick = () => showLogin();
+    workspace.innerHTML = "";
+    showLanding();
+  }
+
+  function drawSignedInNav() {
+    navUser.innerHTML = `<span>${escapeHtml(user.name || user.teacher_name || user.login_id)} (${escapeHtml(user.role)})</span> <button id="logout">Logout</button>`;
+  }
+
+  // "Access GRATTEN" opens the dashboard when already signed in, the login form otherwise.
+  document.querySelector("#start-login").onclick = () => (user ? renderDashboard() : showLogin());
+
+  // The logo, Home and Features links stay on the front page instead of reloading into the dashboard.
+  document.querySelectorAll('.brand, .nav-links a[href="/"]').forEach((a) =>
+    a.addEventListener("click", (e) => { e.preventDefault(); showLanding(); }));
+  document.querySelectorAll('.nav-links a[href="#features"]').forEach((a) =>
+    a.addEventListener("click", (e) => { e.preventDefault(); showLanding(); document.querySelector("#features").scrollIntoView({ behavior: "smooth" }); }));
+
+  // app.js announces an existing session on page load; show the front page, not the dashboard.
+  document.addEventListener("gratten:signed-in", () => { drawSignedInNav(); showLanding(); });
+  if (user) { drawSignedInNav(); showLanding(); }
+
+  // Whenever the signed-in nav is drawn, add Dashboard + Profile buttons and a Logout that returns to the front page.
   new MutationObserver(() => {
     const out = document.querySelector("#logout");
     if (out && !document.querySelector("#nav-profile")) {
+      const d = document.createElement("button");
+      d.id = "nav-dashboard"; d.type = "button"; d.textContent = "Dashboard"; d.onclick = () => renderDashboard();
       const b = document.createElement("button");
       b.id = "nav-profile"; b.type = "button"; b.textContent = "Profile"; b.onclick = showProfile;
-      out.before(b);
+      out.before(d, b);
+      out.onclick = signOut;
     }
   }).observe(navUser, { childList: true });
 

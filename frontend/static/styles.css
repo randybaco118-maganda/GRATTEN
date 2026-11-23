@@ -97,7 +97,7 @@ tbody tr:last-child td{border-bottom:0}
 .kv{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px}
 .kv span{color:var(--muted)}
 .muted-link{display:block;margin-top:14px;font-size:13px;color:var(--blue)}
-#nav-profile{background:var(--soft);color:var(--blue)}
+#nav-profile,#nav-dashboard{background:var(--soft);color:var(--blue)}
 
 footer{text-align:center;padding:22px;color:var(--muted);font-size:12px;border-top:1px solid var(--line);background:#fff}
 

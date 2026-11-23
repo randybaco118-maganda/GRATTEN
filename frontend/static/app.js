@@ -59,7 +59,11 @@ function showLogin() {
       <label class="field">Email / ID<input name="identity" required autocomplete="username"></label>
       <label class="field">Password<input name="password" type="password" required autocomplete="current-password"></label>
       <button class="primary" type="submit">Log in</button>
-      <p class="muted">Demo student: 2026-8812 / Student123!<br>Demo teacher: teacher@olopsc.edu.ph / Teacher123!</p>
+      <p class="muted">
+        Demo student: 2026-8812 / Student123!<br>
+        Demo student (RBACO): rbaco25a-0030@olopsc.edu.ph / Student123!<br>
+        Demo teacher: teacher@olopsc.edu.ph / Teacher123!
+      </p>
     </form>`;
   document.querySelector("#login-form").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -106,6 +110,7 @@ async function renderDashboard() {
           <button class="secondary" id="grades-tab">Grades</button>
           <button class="secondary" id="attendance-tab">Attendance</button>
           <button class="secondary" id="results-tab">Results</button>
+          ${user.role === "Teacher" ? '<button class="secondary" id="add-subject-tab">+ Add subject</button>' : ""}
         </div>
       </div>
       <div class="field">
@@ -127,7 +132,57 @@ async function renderDashboard() {
   document.querySelector("#grades-tab").onclick = () => renderModule("grades");
   document.querySelector("#attendance-tab").onclick = () => renderModule("attendance");
   document.querySelector("#results-tab").onclick = () => renderResults();
+  const addBtn = document.querySelector("#add-subject-tab");
+  if (addBtn) addBtn.onclick = showAddSubject;
   renderModule("grades");
+}
+
+function showAddSubject() {
+  const host = document.querySelector("#module");
+  host.innerHTML = `
+    <form id="subject-form" class="panel">
+      <h3>Add a subject</h3>
+      <label class="field">Subject ID
+        <input name="subject_id" placeholder="e.g. SE108" required maxlength="12">
+      </label>
+      <label class="field">Code
+        <input name="code" placeholder="e.g. SENG" required maxlength="10">
+      </label>
+      <label class="field">Subject name
+        <input name="name" placeholder="e.g. Software Engineering" required maxlength="80">
+      </label>
+      <label class="field">Units
+        <input name="units" type="number" min="1" max="6" value="3" required>
+      </label>
+      <label><input type="checkbox" name="enroll_all" checked> Enroll all students in this subject</label>
+      <br><br>
+      <div class="actions">
+        <button class="primary" type="submit">Create subject</button>
+        <button type="button" class="secondary" id="cancel-subject">Cancel</button>
+      </div>
+    </form>`;
+
+  document.querySelector("#cancel-subject").onclick = () => renderModule("grades");
+  document.querySelector("#subject-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    const body = {
+      subject_id: f.get("subject_id"),
+      code: f.get("code"),
+      name: f.get("name"),
+      units: Number(f.get("units")),
+      enroll_all: f.get("enroll_all") === "on",
+    };
+    try {
+      const d = await api("/api/subjects", { method: "POST", body: JSON.stringify(body) });
+      selectedSubject = d.subject.subject_id;
+      selectedSection = "ALL";
+      toast("Subject created.");
+      await renderDashboard();
+    } catch (err) {
+      toast(err.message);
+    }
+  };
 }
 
 function renderTeacherSectionsBar() {
